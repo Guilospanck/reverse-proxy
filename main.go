@@ -33,6 +33,7 @@ func handleConnection(c net.Conn) {
 	packet := make([]byte, 4096)
 	tmp := make([]byte, 4096)
 	defer c.Close()
+
 	for {
 		_, err := c.Read(tmp)
 		if err != nil {
@@ -45,7 +46,4 @@ func handleConnection(c net.Conn) {
 		httpServer.ParseMessage(packet)
 		break
 	}
-	// num, _ := c.Write(packet)
-	// fmt.Printf("Wrote back %d bytes, the payload is %s\n", num, string(packet))
-	// fmt.Print(string(packet))
 }

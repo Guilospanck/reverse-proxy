@@ -7,8 +7,6 @@ import (
 )
 
 /*
-Some info: https://www.notion.so/HTTP-from-scratch-12180e3900fd801d99e4d105d2ddc7aa?pvs=4
-
 My thoughts are:
 - Create a simple http server from scratch, with only GET and POST methods
 and only validating a couple of things;
@@ -30,8 +28,8 @@ HTTP-message   = start-line CRLF
 type Method string
 
 const (
-	get Method = "GET"
-	// post Method = "POST"
+	get  Method = "GET"
+	post Method = "POST"
 )
 
 type RequestLine struct {
@@ -40,9 +38,11 @@ type RequestLine struct {
 	httpVersion   string
 }
 
+type Headers map[string]string
+
 type HttpServer struct {
 	requestLine RequestLine
-	headers     map[string]string
+	headers     Headers
 	body        *string
 }
 
@@ -58,7 +58,7 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) {
 	message := string(byteMessage[:])
 
 	// Remove leading null characters
-	message = strings.TrimLeft(message, "\x00")
+	message = strings.Trim(message, "\x00")
 
 	// Tries to split the components of HTTP message using CRLF
 	splitMessage = strings.Split(message, "\r\n")
@@ -72,15 +72,93 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) {
 	}
 
 	startLine := splitMessage[0]
-	server.parseRequestLine(startLine)
+	err := server.parseRequestLine(startLine)
+	if err != nil {
+		panic(err)
+	}
 
-	fmt.Printf("%v", server.requestLine)
+	fmt.Printf("Request Line: %v\n", server.requestLine)
+
+	headersAndBody := splitMessage[1:]
+	headersAndBodyLength := len(headersAndBody)
+
+	var messageBodyIndex *int = nil
+	for index, line := range headersAndBody {
+		isLastValue := index == headersAndBodyLength-1
+
+		if line == "" && !isLastValue && headersAndBody[index+1] != "" {
+			messageBodyIndex = &index
+			*messageBodyIndex++
+			break
+		}
+	}
+
+	// check headers
+	var finalHeadersIndex *int = messageBodyIndex
+	if messageBodyIndex == nil {
+		finalHeadersIndex = &headersAndBodyLength
+	}
+	headers := headersAndBody[:*finalHeadersIndex-1]
+	err = server.parseHTTPHeaders(headers)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("Headers: \n%v\n", server.headers)
+
+	// check body
+	if messageBodyIndex == nil {
+		return
+	}
+	messageBody := headersAndBody[*messageBodyIndex]
+	err = server.parseHTTPMessageBody(messageBody, messageBodyIndex)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("Body: \n%v\n", *server.body)
+}
+
+func (server *HttpServer) parseHTTPMessageBody(messageBody string, messageBodyStartIndex *int) error {
+	contentLengthHeader := server.headers["Content-Length"]
+	// Have the message body but it's missing the content length header
+	// (we are not looking for the transfer encoding atm)
+	// See: https://httpwg.org/specs/rfc9112.html#message.body.length
+	if contentLengthHeader == "" && messageBodyStartIndex != nil {
+		return errors.New("411 Length Required: missing Content-Length header")
+	}
+
+	server.body = &messageBody
+
+	return nil
+}
+
+func (server *HttpServer) parseHTTPHeaders(array []string) error {
+	headers := make(map[string]string)
+	for _, item := range array {
+		split := strings.Split(item, ":")
+		fieldName := split[0]
+		fieldValue := strings.Join(split[1:], ":")
+
+		if len(strings.Split(fieldName, " ")) > 1 {
+			return errors.New("400 Bad Request: cannot have whitespace between field name and colon")
+		}
+
+		headers[fieldName] = strings.Trim(fieldValue, " ")
+
+	}
+
+	server.headers = headers
+
+	return nil
 }
 
 func (server *HttpServer) parseHTTPMethod(str string) (Method, error) {
 	switch str {
 	case string(get):
 		return get, nil
+	case string(post):
+		return post, nil
 	default:
 		return "", errors.New("501 Not Implemented")
 	}
@@ -119,30 +197,31 @@ func (server *HttpServer) parseHTTPVersion(str string) (string, error) {
 }
 
 // request-line   = method SP request-target SP HTTP-version
-func (server *HttpServer) parseRequestLine(requestLine string) {
-	fmt.Printf("Request line: '%s'\n", requestLine)
+func (server *HttpServer) parseRequestLine(requestLine string) error {
 	// split based on whitespace
 	split := strings.Split(requestLine, " ")
 	if len(split) != 3 {
-		panic("Request line not parseable. Expected: method SP request-target SP HTTP-version")
+		return errors.New("Request line not parseable. Expected: method SP request-target SP HTTP-version")
 	}
 
 	method, err := server.parseHTTPMethod(split[0])
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	requestTarget, err := server.parseRequestTarget(split[1])
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	httpVersion, err := server.parseHTTPVersion(split[2])
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	server.requestLine.method = method
 	server.requestLine.requestTarget = requestTarget
 	server.requestLine.httpVersion = httpVersion
+
+	return nil
 }
