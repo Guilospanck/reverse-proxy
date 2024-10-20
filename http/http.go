@@ -2,6 +2,7 @@ package http
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -29,8 +30,8 @@ HTTP-message   = start-line CRLF
 type Method string
 
 const (
-	get Method = "GET"
-	// post Method = "POST"
+	get  Method = "GET"
+	post Method = "POST"
 )
 
 type RequestLine struct {
@@ -45,7 +46,11 @@ type HttpServer struct {
 	body        *string
 }
 
-func (server *HttpServer) parseMessage(byteMessage []byte) {
+func NewHTTPServer() HttpServer {
+	return HttpServer{}
+}
+
+func (server *HttpServer) ParseMessage(byteMessage []byte) {
 	var splitMessage []string
 
 	// "A recipient MUSt parse an HTTP message as a sequence of octets (sequence of bytes)"
@@ -65,14 +70,19 @@ func (server *HttpServer) parseMessage(byteMessage []byte) {
 
 	startLine := splitMessage[0]
 	server.parseRequestLine(startLine)
+
+	fmt.Printf("%v", server.requestLine)
 }
 
 func (server *HttpServer) parseHTTPMethod(str string) (Method, error) {
-	switch str {
-	case string(get):
-		return get, nil
-	// case string(post):
-	// 	return post, nil
+	fmt.Println(Method(str)) // GET
+	fmt.Println(strings.Split(str, " "))
+	fmt.Println(get) // GET
+	fmt.Println(strings.Split(string(get), " "))
+	fmt.Println(Method(str) == get) // false
+	switch Method(str) {
+	case get, post:
+		return Method(str), nil
 	default:
 		return "", errors.New("501 Not Implemented")
 	}
