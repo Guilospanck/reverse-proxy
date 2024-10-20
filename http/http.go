@@ -30,8 +30,8 @@ HTTP-message   = start-line CRLF
 type Method string
 
 const (
-	get  Method = "GET"
-	post Method = "POST"
+	get Method = "GET"
+	// post Method = "POST"
 )
 
 type RequestLine struct {
@@ -53,9 +53,12 @@ func NewHTTPServer() HttpServer {
 func (server *HttpServer) ParseMessage(byteMessage []byte) {
 	var splitMessage []string
 
-	// "A recipient MUSt parse an HTTP message as a sequence of octets (sequence of bytes)"
+	// "A recipient MUST parse an HTTP message as a sequence of octets (sequence of bytes)"
 	// See here: https://httpwg.org/specs/rfc9112.html#message.parsing
 	message := string(byteMessage[:])
+
+	// Remove leading null characters
+	message = strings.TrimLeft(message, "\x00")
 
 	// Tries to split the components of HTTP message using CRLF
 	splitMessage = strings.Split(message, "\r\n")
@@ -75,14 +78,9 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) {
 }
 
 func (server *HttpServer) parseHTTPMethod(str string) (Method, error) {
-	fmt.Println(Method(str)) // GET
-	fmt.Println(strings.Split(str, " "))
-	fmt.Println(get) // GET
-	fmt.Println(strings.Split(string(get), " "))
-	fmt.Println(Method(str) == get) // false
-	switch Method(str) {
-	case get, post:
-		return Method(str), nil
+	switch str {
+	case string(get):
+		return get, nil
 	default:
 		return "", errors.New("501 Not Implemented")
 	}
@@ -122,6 +120,7 @@ func (server *HttpServer) parseHTTPVersion(str string) (string, error) {
 
 // request-line   = method SP request-target SP HTTP-version
 func (server *HttpServer) parseRequestLine(requestLine string) {
+	fmt.Printf("Request line: '%s'\n", requestLine)
 	// split based on whitespace
 	split := strings.Split(requestLine, " ")
 	if len(split) != 3 {

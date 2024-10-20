@@ -43,6 +43,7 @@ func handleConnection(c net.Conn) {
 		}
 		packet = append(packet, tmp...)
 		httpServer.ParseMessage(packet)
+		break
 	}
 	// num, _ := c.Write(packet)
 	// fmt.Printf("Wrote back %d bytes, the payload is %s\n", num, string(packet))
