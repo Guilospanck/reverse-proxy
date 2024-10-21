@@ -34,16 +34,18 @@ func handleConnection(c net.Conn) {
 	tmp := make([]byte, 4096)
 	defer c.Close()
 
-	for {
-		_, err := c.Read(tmp)
-		if err != nil {
-			if err != io.EOF {
-				fmt.Println("read error:", err)
-			}
-			break
+	_, err := c.Read(tmp)
+	if err != nil {
+		if err != io.EOF {
+			fmt.Println("read error:", err)
 		}
-		packet = append(packet, tmp...)
-		httpServer.ParseMessage(packet)
-		break
+	}
+	packet = append(packet, tmp...)
+	response := httpServer.ParseMessage(packet)
+	fmt.Println(response.ToString())
+
+	_, err = c.Write([]byte(response.ToString()))
+	if err != nil {
+		fmt.Println(err.Error())
 	}
 }

@@ -38,6 +38,12 @@ type RequestLine struct {
 	httpVersion   string
 }
 
+type StatusLine struct {
+	httpVersion string
+	statusCode  int
+	statusText  string
+}
+
 type Headers map[string]string
 
 type HttpServer struct {
@@ -46,11 +52,34 @@ type HttpServer struct {
 	body        *string
 }
 
+type HttpResponse struct {
+	statusLine StatusLine
+	headers    Headers
+	body       *string
+}
+
+func (sl *StatusLine) toString() string {
+	return fmt.Sprintf("%s %d %s", sl.httpVersion, sl.statusCode, sl.statusText)
+}
+
+func (headers *Headers) toString() string {
+	acc := []string{}
+	for key, value := range *headers {
+		acc = append(acc, fmt.Sprintf("%s: %s", key, value))
+	}
+
+	return strings.Join(acc, "\r\n")
+}
+
+func (response *HttpResponse) ToString() string {
+	return fmt.Sprintf("%s\r\n%s\r\n\r\n%s\r\n", response.statusLine.toString(), response.headers.toString(), *response.body)
+}
+
 func NewHTTPServer() HttpServer {
 	return HttpServer{}
 }
 
-func (server *HttpServer) ParseMessage(byteMessage []byte) {
+func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 	var splitMessage []string
 
 	// "A recipient MUST parse an HTTP message as a sequence of octets (sequence of bytes)"
@@ -68,13 +97,33 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) {
 	}
 	// If it is still not possible, it is because there is something wrong
 	if len(splitMessage) == 1 {
-		panic("Something wrong with the HTTP message")
+		fmt.Println("Split message based on the CRLF (LF) has not succeeded")
+
+		return HttpResponse{
+			statusLine: StatusLine{
+				httpVersion: "HTTP/1.1",
+				statusCode:  400,
+				statusText:  "Bad Request",
+			},
+			headers: map[string]string{"Accept": "*/*"},
+			body:    nil,
+		}
 	}
 
 	startLine := splitMessage[0]
 	err := server.parseRequestLine(startLine)
 	if err != nil {
-		panic(err)
+		fmt.Println(err)
+
+		return HttpResponse{
+			statusLine: StatusLine{
+				httpVersion: "HTTP/1.1",
+				statusCode:  400,
+				statusText:  "Bad Request",
+			},
+			headers: map[string]string{"Accept": "*/*"},
+			body:    nil,
+		}
 	}
 
 	fmt.Printf("Request Line: %v\n", server.requestLine)
@@ -101,22 +150,64 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) {
 	headers := headersAndBody[:*finalHeadersIndex-1]
 	err = server.parseHTTPHeaders(headers)
 	if err != nil {
-		panic(err)
+		fmt.Println(err)
+
+		return HttpResponse{
+			statusLine: StatusLine{
+				httpVersion: "HTTP/1.1",
+				statusCode:  400,
+				statusText:  "Bad Request",
+			},
+			headers: map[string]string{"Accept": "*/*"},
+			body:    nil,
+		}
 	}
 
 	fmt.Printf("Headers: \n%v\n", server.headers)
 
 	// check body
 	if messageBodyIndex == nil {
-		return
+		body := "[potato]"
+
+		return HttpResponse{
+			statusLine: StatusLine{
+				httpVersion: "HTTP/1.1",
+				statusCode:  200,
+				statusText:  "Ok",
+			},
+			headers: map[string]string{"Accept": "*/*"},
+			body:    &body,
+		}
 	}
 	messageBody := headersAndBody[*messageBodyIndex]
 	err = server.parseHTTPMessageBody(messageBody, messageBodyIndex)
 	if err != nil {
-		panic(err)
+		fmt.Println(err)
+
+		return HttpResponse{
+			statusLine: StatusLine{
+				httpVersion: "HTTP/1.1",
+				statusCode:  400,
+				statusText:  "Bad Request",
+			},
+			headers: map[string]string{"Accept": "*/*"},
+			body:    nil,
+		}
 	}
 
 	fmt.Printf("Body: \n%v\n", *server.body)
+
+	body := "[potato2]"
+
+	return HttpResponse{
+		statusLine: StatusLine{
+			httpVersion: "HTTP/1.1",
+			statusCode:  200,
+			statusText:  "Ok",
+		},
+		headers: map[string]string{"Accept": "*/*"},
+		body:    &body,
+	}
 }
 
 func (server *HttpServer) parseHTTPMessageBody(messageBody string, messageBodyStartIndex *int) error {
@@ -136,6 +227,9 @@ func (server *HttpServer) parseHTTPMessageBody(messageBody string, messageBodySt
 func (server *HttpServer) parseHTTPHeaders(array []string) error {
 	headers := make(map[string]string)
 	for _, item := range array {
+		if item == "" {
+			continue
+		}
 		split := strings.Split(item, ":")
 		fieldName := split[0]
 		fieldValue := strings.Join(split[1:], ":")
