@@ -1,3 +1,9 @@
+/*
+Test POST:
+
+	curl -X POST http://0.0.0.0:3333 -d @test.json
+	curl http://0.0.0.0:3333
+*/
 package main
 
 import (
@@ -9,15 +15,22 @@ import (
 )
 
 func main() {
-	l, err := net.Listen("tcp4", ":8000")
+	l, err := net.Listen("tcp4", "0.0.0.0:3333")
 	if err != nil {
+		fmt.Printf("net listen error")
 		log.Fatal(err)
 	}
-	defer l.Close()
+	defer (func() {
+		err := l.Close()
+		if err != nil {
+			fmt.Printf("Listener close error")
+		}
+	})()
 
 	for {
 		c, err := l.Accept()
 		if err != nil {
+			fmt.Printf("Listener accept error")
 			fmt.Println(err)
 			return
 		}
@@ -32,20 +45,25 @@ func handleConnection(c net.Conn) {
 
 	packet := make([]byte, 4096)
 	tmp := make([]byte, 4096)
-	defer c.Close()
+	defer (func() {
+		err := c.Close()
+		if err != nil {
+			fmt.Printf("Connection close error")
+		}
+	})()
 
 	_, err := c.Read(tmp)
 	if err != nil {
 		if err != io.EOF {
-			fmt.Println("read error:", err)
+			fmt.Println("Connection read error:", err)
 		}
 	}
 	packet = append(packet, tmp...)
 	response := httpServer.ParseMessage(packet)
-	fmt.Println(response.ToString())
 
 	_, err = c.Write([]byte(response.ToString()))
 	if err != nil {
+		fmt.Printf("Connection write error")
 		fmt.Println(err.Error())
 	}
 }

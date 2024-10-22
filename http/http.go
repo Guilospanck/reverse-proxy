@@ -7,15 +7,6 @@ import (
 )
 
 /*
-My thoughts are:
-- Create a simple http server from scratch, with only GET and POST methods
-and only validating a couple of things;
-- Start the server using TCP;
-- Test it using curl, for example;
-- Validate how the well-known libraries implement the http protocol.
-*/
-
-/*
 HTTP-message   = start-line CRLF
 
 	*( field-line CRLF )
@@ -72,11 +63,11 @@ func (headers *Headers) toString() string {
 }
 
 func (response *HttpResponse) ToString() string {
-	return fmt.Sprintf("%s\r\n%s\r\n\r\n%s\r\n", response.statusLine.toString(), response.headers.toString(), *response.body)
-}
+	if response.body != nil {
+		return fmt.Sprintf("%s\r\n%s\r\n\r\n%s\r\n", response.statusLine.toString(), response.headers.toString(), *response.body)
+	}
 
-func NewHTTPServer() HttpServer {
-	return HttpServer{}
+	return fmt.Sprintf("%s\r\n%s\r\n", response.statusLine.toString(), response.headers.toString())
 }
 
 func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
@@ -167,8 +158,6 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 
 	// check body
 	if messageBodyIndex == nil {
-		body := "[potato]"
-
 		return HttpResponse{
 			statusLine: StatusLine{
 				httpVersion: "HTTP/1.1",
@@ -176,7 +165,7 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 				statusText:  "Ok",
 			},
 			headers: map[string]string{"Accept": "*/*"},
-			body:    &body,
+			body:    nil,
 		}
 	}
 	messageBody := headersAndBody[*messageBodyIndex]
@@ -197,8 +186,6 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 
 	fmt.Printf("Body: \n%v\n", *server.body)
 
-	body := "[potato2]"
-
 	return HttpResponse{
 		statusLine: StatusLine{
 			httpVersion: "HTTP/1.1",
@@ -206,7 +193,7 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 			statusText:  "Ok",
 		},
 		headers: map[string]string{"Accept": "*/*"},
-		body:    &body,
+		body:    server.body,
 	}
 }
 
@@ -318,4 +305,8 @@ func (server *HttpServer) parseRequestLine(requestLine string) error {
 	server.requestLine.httpVersion = httpVersion
 
 	return nil
+}
+
+func NewHTTPServer() HttpServer {
+	return HttpServer{}
 }
