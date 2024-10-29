@@ -88,8 +88,6 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 	}
 	// If it is still not possible, it is because there is something wrong
 	if len(splitMessage) == 1 {
-		fmt.Println("Split message based on the CRLF (LF) has not succeeded")
-
 		return HttpResponse{
 			statusLine: StatusLine{
 				httpVersion: "HTTP/1.1",
@@ -104,8 +102,6 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 	startLine := splitMessage[0]
 	err := server.parseRequestLine(startLine)
 	if err != nil {
-		fmt.Println(err)
-
 		return HttpResponse{
 			statusLine: StatusLine{
 				httpVersion: "HTTP/1.1",
@@ -116,8 +112,6 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 			body:    nil,
 		}
 	}
-
-	fmt.Printf("Request Line: %v\n", server.requestLine)
 
 	headersAndBody := splitMessage[1:]
 	headersAndBodyLength := len(headersAndBody)
@@ -141,8 +135,6 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 	headers := headersAndBody[:*finalHeadersIndex-1]
 	err = server.parseHTTPHeaders(headers)
 	if err != nil {
-		fmt.Println(err)
-
 		return HttpResponse{
 			statusLine: StatusLine{
 				httpVersion: "HTTP/1.1",
@@ -154,7 +146,17 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 		}
 	}
 
-	fmt.Printf("Headers: \n%v\n", server.headers)
+	responseBody := `
+		<!DOCTYPE html>
+			<html>
+			<body>
+
+			<h1>This is a GET</h1>
+			<p>Hell yeah</p>
+
+			</body>
+		</html>
+	`
 
 	// check body
 	if messageBodyIndex == nil {
@@ -165,14 +167,12 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 				statusText:  "Ok",
 			},
 			headers: map[string]string{"Accept": "*/*"},
-			body:    nil,
+			body:    &responseBody,
 		}
 	}
 	messageBody := headersAndBody[*messageBodyIndex]
 	err = server.parseHTTPMessageBody(messageBody, messageBodyIndex)
 	if err != nil {
-		fmt.Println(err)
-
 		return HttpResponse{
 			statusLine: StatusLine{
 				httpVersion: "HTTP/1.1",
@@ -184,7 +184,17 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 		}
 	}
 
-	fmt.Printf("Body: \n%v\n", *server.body)
+	responseBody = `
+		<!DOCTYPE html>
+			<html>
+			<body>
+
+			<h1>This is a POST</h1>
+			<p>Hell yeah</p>
+
+			</body>
+		</html>
+	`
 
 	return HttpResponse{
 		statusLine: StatusLine{
@@ -193,7 +203,7 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 			statusText:  "Ok",
 		},
 		headers: map[string]string{"Accept": "*/*"},
-		body:    server.body,
+		body:    &responseBody,
 	}
 }
 

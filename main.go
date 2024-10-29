@@ -8,7 +8,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"reverse_proxy/http"
@@ -27,6 +26,8 @@ func main() {
 		}
 	})()
 
+	proxy := http.Proxy{}
+
 	for {
 		c, err := l.Accept()
 		if err != nil {
@@ -34,36 +35,7 @@ func main() {
 			fmt.Println(err)
 			return
 		}
-		go handleConnection(c)
-	}
-}
 
-func handleConnection(c net.Conn) {
-	fmt.Printf("Serving %s\n", c.RemoteAddr().String())
-
-	httpServer := http.NewHTTPServer()
-
-	packet := make([]byte, 4096)
-	tmp := make([]byte, 4096)
-	defer (func() {
-		err := c.Close()
-		if err != nil {
-			fmt.Printf("Connection close error")
-		}
-	})()
-
-	_, err := c.Read(tmp)
-	if err != nil {
-		if err != io.EOF {
-			fmt.Println("Connection read error:", err)
-		}
-	}
-	packet = append(packet, tmp...)
-	response := httpServer.ParseMessage(packet)
-
-	_, err = c.Write([]byte(response.ToString()))
-	if err != nil {
-		fmt.Printf("Connection write error")
-		fmt.Println(err.Error())
+		go proxy.HandleConnection(c)
 	}
 }
