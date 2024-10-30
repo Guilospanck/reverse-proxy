@@ -3,6 +3,9 @@ package http
 import (
 	"errors"
 	"fmt"
+	"io"
+	"log"
+	"net"
 	"strings"
 )
 
@@ -37,7 +40,7 @@ type StatusLine struct {
 
 type Headers map[string]string
 
-type HttpServer struct {
+type HttpRequest struct {
 	requestLine RequestLine
 	headers     Headers
 	body        *string
@@ -47,6 +50,43 @@ type HttpResponse struct {
 	statusLine StatusLine
 	headers    Headers
 	body       *string
+	c          net.Conn
+}
+
+type HttpServer struct {
+	req        HttpRequest
+	c          net.Conn
+	HandleFunc func(HttpResponse, HttpRequest) error
+}
+
+func (server *HttpServer) ListenAndServe(port string) {
+	l, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%s", port))
+	if err != nil {
+		fmt.Printf("net listen error")
+		log.Fatal(err)
+	}
+	defer (func() {
+		err := l.Close()
+		if err != nil {
+			fmt.Printf("Listener close error")
+		}
+	})()
+
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			fmt.Printf("Listener accept error")
+			fmt.Println(err)
+			return
+		}
+		server.c = c
+
+		go server.handleConnection()
+	}
+}
+
+func NewHTTPServer(handleFunc func(HttpResponse, HttpRequest) error) HttpServer {
+	return HttpServer{HandleFunc: handleFunc}
 }
 
 func (sl *StatusLine) toString() string {
@@ -62,7 +102,7 @@ func (headers *Headers) toString() string {
 	return strings.Join(acc, "\r\n")
 }
 
-func (response *HttpResponse) ToString() string {
+func (response *HttpResponse) toString() string {
 	if response.body != nil {
 		return fmt.Sprintf("%s\r\n%s\r\n\r\n%s\r\n", response.statusLine.toString(), response.headers.toString(), *response.body)
 	}
@@ -70,7 +110,7 @@ func (response *HttpResponse) ToString() string {
 	return fmt.Sprintf("%s\r\n%s\r\n", response.statusLine.toString(), response.headers.toString())
 }
 
-func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
+func (server *HttpServer) parseHTTPRequest(byteMessage []byte) *HttpResponse {
 	var splitMessage []string
 
 	// "A recipient MUST parse an HTTP message as a sequence of octets (sequence of bytes)"
@@ -88,7 +128,7 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 	}
 	// If it is still not possible, it is because there is something wrong
 	if len(splitMessage) == 1 {
-		return HttpResponse{
+		return &HttpResponse{
 			statusLine: StatusLine{
 				httpVersion: "HTTP/1.1",
 				statusCode:  400,
@@ -102,7 +142,7 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 	startLine := splitMessage[0]
 	err := server.parseRequestLine(startLine)
 	if err != nil {
-		return HttpResponse{
+		return &HttpResponse{
 			statusLine: StatusLine{
 				httpVersion: "HTTP/1.1",
 				statusCode:  400,
@@ -135,7 +175,7 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 	headers := headersAndBody[:*finalHeadersIndex-1]
 	err = server.parseHTTPHeaders(headers)
 	if err != nil {
-		return HttpResponse{
+		return &HttpResponse{
 			statusLine: StatusLine{
 				httpVersion: "HTTP/1.1",
 				statusCode:  400,
@@ -146,34 +186,14 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 		}
 	}
 
-	responseBody := `
-		<!DOCTYPE html>
-			<html>
-			<body>
-
-			<h1>This is a GET</h1>
-			<p>Hell yeah</p>
-
-			</body>
-		</html>
-	`
-
 	// check body
 	if messageBodyIndex == nil {
-		return HttpResponse{
-			statusLine: StatusLine{
-				httpVersion: "HTTP/1.1",
-				statusCode:  200,
-				statusText:  "Ok",
-			},
-			headers: map[string]string{"Accept": "*/*"},
-			body:    &responseBody,
-		}
+		return nil
 	}
 	messageBody := headersAndBody[*messageBodyIndex]
 	err = server.parseHTTPMessageBody(messageBody, messageBodyIndex)
 	if err != nil {
-		return HttpResponse{
+		return &HttpResponse{
 			statusLine: StatusLine{
 				httpVersion: "HTTP/1.1",
 				statusCode:  400,
@@ -184,31 +204,11 @@ func (server *HttpServer) ParseMessage(byteMessage []byte) HttpResponse {
 		}
 	}
 
-	responseBody = `
-		<!DOCTYPE html>
-			<html>
-			<body>
-
-			<h1>This is a POST</h1>
-			<p>Hell yeah</p>
-
-			</body>
-		</html>
-	`
-
-	return HttpResponse{
-		statusLine: StatusLine{
-			httpVersion: "HTTP/1.1",
-			statusCode:  200,
-			statusText:  "Ok",
-		},
-		headers: map[string]string{"Accept": "*/*"},
-		body:    &responseBody,
-	}
+	return nil
 }
 
 func (server *HttpServer) parseHTTPMessageBody(messageBody string, messageBodyStartIndex *int) error {
-	contentLengthHeader := server.headers["Content-Length"]
+	contentLengthHeader := server.req.headers["Content-Length"]
 	// Have the message body but it's missing the content length header
 	// (we are not looking for the transfer encoding atm)
 	// See: https://httpwg.org/specs/rfc9112.html#message.body.length
@@ -216,7 +216,7 @@ func (server *HttpServer) parseHTTPMessageBody(messageBody string, messageBodySt
 		return errors.New("411 Length Required: missing Content-Length header")
 	}
 
-	server.body = &messageBody
+	server.req.body = &messageBody
 
 	return nil
 }
@@ -239,7 +239,7 @@ func (server *HttpServer) parseHTTPHeaders(array []string) error {
 
 	}
 
-	server.headers = headers
+	server.req.headers = headers
 
 	return nil
 }
@@ -253,7 +253,6 @@ func (server *HttpServer) parseHTTPMethod(str string) (Method, error) {
 	default:
 		return "", errors.New("501 Not Implemented")
 	}
-
 }
 
 // https://httpwg.org/specs/rfc9112.html#request.target
@@ -310,13 +309,47 @@ func (server *HttpServer) parseRequestLine(requestLine string) error {
 		return err
 	}
 
-	server.requestLine.method = method
-	server.requestLine.requestTarget = requestTarget
-	server.requestLine.httpVersion = httpVersion
+	server.req.requestLine.method = method
+	server.req.requestLine.requestTarget = requestTarget
+	server.req.requestLine.httpVersion = httpVersion
 
 	return nil
 }
 
-func NewHTTPServer() HttpServer {
-	return HttpServer{}
+func (response *HttpResponse) Write(message []byte) error {
+	_, err := response.c.Write(message)
+	if err != nil {
+		fmt.Printf("Connection write error")
+		fmt.Println(err.Error())
+		return err
+	}
+	return nil
+}
+
+func (server *HttpServer) handleConnection() {
+	fmt.Printf("Serving %s\n", server.c.RemoteAddr().String())
+
+	packet := make([]byte, 4096)
+	tmp := make([]byte, 4096)
+	defer (func() {
+		err := server.c.Close()
+		if err != nil {
+			fmt.Printf("Connection close error")
+		}
+	})()
+
+	_, err := server.c.Read(tmp)
+	if err != nil {
+		if err != io.EOF {
+			fmt.Println("Connection read error:", err)
+		}
+	}
+	packet = append(packet, tmp...)
+
+	error := server.parseHTTPRequest(packet)
+	if error != nil {
+		error.Write([]byte(error.toString()))
+	}
+	httpResponse := HttpResponse{c: server.c}
+	server.HandleFunc(httpResponse, server.req)
 }

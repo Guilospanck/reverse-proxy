@@ -8,34 +8,35 @@ package main
 
 import (
 	"fmt"
-	"log"
-	"net"
 	"reverse_proxy/http"
 )
 
 func main() {
-	l, err := net.Listen("tcp4", "0.0.0.0:3333")
-	if err != nil {
-		fmt.Printf("net listen error")
-		log.Fatal(err)
-	}
-	defer (func() {
-		err := l.Close()
-		if err != nil {
-			fmt.Printf("Listener close error")
-		}
-	})()
+	serverA := http.NewHTTPServer(func(hr1 http.HttpResponse, hr2 http.HttpRequest) error {
+		fmt.Println("Hello from server A")
+		fmt.Println(hr1)
+		fmt.Println(hr2)
+		return nil
+	})
+	serverB := http.NewHTTPServer(func(hr1 http.HttpResponse, hr2 http.HttpRequest) error {
+		fmt.Println("Hello from server B")
+		fmt.Println(hr1)
+		fmt.Println(hr2)
+		return nil
+	})
+	serverC := http.NewHTTPServer(func(hr1 http.HttpResponse, hr2 http.HttpRequest) error {
+		fmt.Println("Hello from server C")
+		fmt.Println(hr1)
+		fmt.Println(hr2)
+		return nil
+	})
 
-	proxy := http.Proxy{}
+	go serverA.ListenAndServe("3000")
+	go serverB.ListenAndServe("4000")
+	go serverC.ListenAndServe("5000")
 
 	for {
-		c, err := l.Accept()
-		if err != nil {
-			fmt.Printf("Listener accept error")
-			fmt.Println(err)
-			return
-		}
 
-		go proxy.HandleConnection(c)
 	}
+
 }
