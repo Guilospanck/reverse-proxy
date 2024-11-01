@@ -50,13 +50,16 @@ type HttpResponse struct {
 	statusLine StatusLine
 	headers    Headers
 	body       *string
-	c          net.Conn
 }
 
 type HttpServer struct {
 	req        HttpRequest
 	c          net.Conn
-	HandleFunc func(HttpResponse, HttpRequest) error
+	HandleFunc func(ResponseWriter, HttpRequest) error
+}
+
+type ResponseWriter interface {
+	Write([]byte) (int, error)
 }
 
 func (server *HttpServer) ListenAndServe(port string) {
@@ -74,6 +77,7 @@ func (server *HttpServer) ListenAndServe(port string) {
 
 	for {
 		c, err := l.Accept()
+		fmt.Println("Accepted!")
 		if err != nil {
 			fmt.Printf("Listener accept error")
 			fmt.Println(err)
@@ -85,12 +89,16 @@ func (server *HttpServer) ListenAndServe(port string) {
 	}
 }
 
-func NewHTTPServer(handleFunc func(HttpResponse, HttpRequest) error) HttpServer {
+func NewHTTPServer(handleFunc func(ResponseWriter, HttpRequest) error) HttpServer {
 	return HttpServer{HandleFunc: handleFunc}
 }
 
 func (sl *StatusLine) toString() string {
-	return fmt.Sprintf("%s %d %s", sl.httpVersion, sl.statusCode, sl.statusText)
+	return fmt.Sprintf("HTTP/%s %d %s", sl.httpVersion, sl.statusCode, sl.statusText)
+}
+
+func (rl *RequestLine) toString() string {
+	return fmt.Sprintf("%s %s %s", rl.method, rl.requestTarget, rl.httpVersion)
 }
 
 func (headers *Headers) toString() string {
@@ -100,6 +108,14 @@ func (headers *Headers) toString() string {
 	}
 
 	return strings.Join(acc, "\r\n")
+}
+
+func (request *HttpRequest) ToString() string {
+	if request.body != nil {
+		return fmt.Sprintf("%s\r\n%s\r\n\r\n%s\r\n", request.requestLine.toString(), request.headers.toString(), *request.body)
+	}
+
+	return fmt.Sprintf("%s\r\n%s\r\n", request.requestLine.toString(), request.headers.toString())
 }
 
 func (response *HttpResponse) toString() string {
@@ -316,14 +332,28 @@ func (server *HttpServer) parseRequestLine(requestLine string) error {
 	return nil
 }
 
-func (response *HttpResponse) Write(message []byte) error {
-	_, err := response.c.Write(message)
+// TODO: handle status code
+func (server *HttpServer) Write(message []byte) (int, error) {
+	fmt.Printf("Writing message: %s\n", string(message))
+
+	body := string(message)
+	response := HttpResponse{
+		statusLine: StatusLine{
+			httpVersion: "1.1",
+			statusCode:  200,
+			statusText:  "OK",
+		},
+		headers: Headers{},
+		body:    &body,
+	}
+
+	n, err := server.c.Write([]byte(response.toString()))
 	if err != nil {
 		fmt.Printf("Connection write error")
 		fmt.Println(err.Error())
-		return err
+		return n, err
 	}
-	return nil
+	return n, nil
 }
 
 func (server *HttpServer) handleConnection() {
@@ -348,8 +378,10 @@ func (server *HttpServer) handleConnection() {
 
 	error := server.parseHTTPRequest(packet)
 	if error != nil {
-		error.Write([]byte(error.toString()))
+		server.Write([]byte(error.toString()))
 	}
-	httpResponse := HttpResponse{c: server.c}
-	server.HandleFunc(httpResponse, server.req)
+	err = server.HandleFunc(server, server.req)
+	if err != nil {
+		server.Write([]byte(err.Error()))
+	}
 }
