@@ -225,8 +225,9 @@ func (server *HttpServer) parseHTTPRequest(byteMessage []byte) *HttpResponse {
 	var messageBodyIndex *int = nil
 	for index, line := range headersAndBody {
 		isLastValue := index == headersAndBodyLength-1
+		isTheBodyNext := line == "" && !isLastValue && headersAndBody[index+1] != ""
 
-		if line == "" && !isLastValue && headersAndBody[index+1] != "" {
+		if isTheBodyNext {
 			messageBodyIndex = &index
 			*messageBodyIndex++
 			break
@@ -282,7 +283,8 @@ func (server *HttpServer) parseHTTPMessageBody(messageBody string, messageBodySt
 	// Have the message body but it's missing the content length header
 	// (we are not looking for the transfer encoding atm)
 	// See: https://httpwg.org/specs/rfc9112.html#message.body.length
-	if contentLengthHeader == "" && messageBodyStartIndex != nil {
+	hasBodyButNotContentLengthHeader := contentLengthHeader == "" && messageBodyStartIndex != nil
+	if hasBodyButNotContentLengthHeader {
 		errMsg := "Missing Content-Length header"
 		return &HTTPError{
 			statusCode: LengthRequiredStatusCode,
@@ -305,6 +307,7 @@ func (server *HttpServer) parseHTTPHeaders(array []string) CustomError {
 		fieldName := split[0]
 		fieldValue := strings.Join(split[1:], ":")
 
+		// https://httpwg.org/specs/rfc9112.html#rfc.section.5.1
 		if len(strings.Split(fieldName, " ")) > 1 {
 			errMsg := "Cannot have whitespace between field name and colon"
 			return &HTTPError{
