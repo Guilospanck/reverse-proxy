@@ -30,7 +30,6 @@ type CustomError interface {
 	GetBody() *string
 }
 
-// TODO: create error factory
 type HTTPError struct {
 	statusCode StatusCode
 	body       *string
