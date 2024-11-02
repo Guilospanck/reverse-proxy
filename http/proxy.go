@@ -41,9 +41,16 @@ func (proxy *ReverseProxyServer) forward(w ResponseWriter, req HttpRequest) erro
 	for scanner.Scan() {
 		response = append(response, string(scanner.Bytes()))
 	}
-	res := strings.Join(response[3:], "")
+	/*
+		HTTP-message:
+					start-line CRLF
+					*( field-line CRLF )
+					CRLF
+					[ message-body ]
+	*/
+	body := strings.Join(response[3:], "")
 
-	fmt.Fprintf(w, res)
+	fmt.Fprintf(w, body)
 
 	return nil
 }

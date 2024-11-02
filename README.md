@@ -1,6 +1,6 @@
 # Reverse proxy
 
-Simple reverse proxy plus HTTP server for study purposes.
+Simple reverse proxy plus HTTP server (1.1) for study purposes.
 
 ## Installation
 

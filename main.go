@@ -8,7 +8,10 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
 	"reverse_proxy/http"
+	"syscall"
 )
 
 func main() {
@@ -41,8 +44,13 @@ func main() {
 	proxy := http.ReverseProxyServer{}
 	go proxy.Serve()
 
-	for {
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
 
+	select {
+	case <-done:
+		fmt.Println("CTRL-c pressed, closing connection...")
+		break
 	}
 
 }
