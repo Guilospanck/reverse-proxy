@@ -13,7 +13,6 @@ import (
 
 func main() {
 	serverA := http.NewHTTPServer(func(w http.ResponseWriter, req http.HttpRequest) error {
-		fmt.Println(req)
 		_, err := fmt.Fprintf(w, "Server A")
 		if err != nil {
 			fmt.Printf("Error: %s\n", err.Error())

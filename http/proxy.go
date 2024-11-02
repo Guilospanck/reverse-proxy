@@ -24,19 +24,18 @@ func (proxy *ReverseProxyServer) forward(w ResponseWriter, req HttpRequest) erro
 	case "/c":
 		port = "5000"
 	default:
+		w.WriteStatusCode(NotFoundStatusCode)
 		return fmt.Errorf("Path not found")
 	}
 
 	conn, err := net.Dial("tcp", fmt.Sprintf("0.0.0.0:%s", port))
 	defer conn.Close()
 	if err != nil {
-		fmt.Println("error dialing to hostname and port")
+		fmt.Println("Error dialing to hostname and port")
 		return err
 	}
 	fmt.Fprintf(conn, req.ToString())
 
-	// TODO: this is probably not the best way to forward the response
-	// to the client
 	scanner := bufio.NewScanner(conn)
 	var response []string
 	for scanner.Scan() {

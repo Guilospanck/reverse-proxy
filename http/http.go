@@ -1,7 +1,6 @@
 package http
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -26,6 +25,50 @@ const (
 	post Method = "POST"
 )
 
+type CustomError interface {
+	GetStatusCode() StatusCode
+	GetBody() *string
+}
+
+// TODO: create error factory
+type HTTPError struct {
+	statusCode StatusCode
+	body       *string
+}
+
+func (httpError *HTTPError) GetStatusCode() StatusCode {
+	return httpError.statusCode
+}
+
+func (httpError *HTTPError) GetBody() *string {
+	return httpError.body
+}
+
+type StatusCode int
+type StatusText string
+
+var (
+	OkStatusCode                  StatusCode = 200
+	CreatedStatusCode             StatusCode = 201
+	BadRequestStatusCode          StatusCode = 400
+	NotFoundStatusCode            StatusCode = 404
+	LengthRequiredStatusCode      StatusCode = 411
+	InternalServerErrorStatusCode StatusCode = 500
+	NotImplementedStatusCode      StatusCode = 501
+)
+
+var StatusCodeToStatusText = map[StatusCode]StatusText{
+	200: "OK",
+	201: "Created",
+	400: "Bad Request",
+	404: "Not Found",
+	411: "Length Required",
+	500: "Internal Server Error",
+	501: "Not Implemented",
+}
+
+const SupportedHTTPVersion string = "HTTP/1.1"
+
 type RequestLine struct {
 	method        Method
 	requestTarget string
@@ -34,8 +77,8 @@ type RequestLine struct {
 
 type StatusLine struct {
 	httpVersion string
-	statusCode  int
-	statusText  string
+	statusCode  *StatusCode
+	statusText  StatusText
 }
 
 type Headers map[string]string
@@ -54,12 +97,14 @@ type HttpResponse struct {
 
 type HttpServer struct {
 	req        HttpRequest
+	res        HttpResponse
 	c          net.Conn
 	HandleFunc func(ResponseWriter, HttpRequest) error
 }
 
 type ResponseWriter interface {
 	Write([]byte) (int, error)
+	WriteStatusCode(statusCode StatusCode) error
 }
 
 func (server *HttpServer) ListenAndServe(port string) {
@@ -94,7 +139,11 @@ func NewHTTPServer(handleFunc func(ResponseWriter, HttpRequest) error) HttpServe
 }
 
 func (sl *StatusLine) toString() string {
-	return fmt.Sprintf("HTTP/%s %d %s", sl.httpVersion, sl.statusCode, sl.statusText)
+	statusCode := sl.statusCode
+	if sl.statusCode == nil {
+		statusCode = &OkStatusCode
+	}
+	return fmt.Sprintf("%s %d %s", sl.httpVersion, *statusCode, sl.statusText)
 }
 
 func (rl *RequestLine) toString() string {
@@ -146,9 +195,9 @@ func (server *HttpServer) parseHTTPRequest(byteMessage []byte) *HttpResponse {
 	if len(splitMessage) == 1 {
 		return &HttpResponse{
 			statusLine: StatusLine{
-				httpVersion: "HTTP/1.1",
-				statusCode:  400,
-				statusText:  "Bad Request",
+				httpVersion: SupportedHTTPVersion,
+				statusCode:  &BadRequestStatusCode,
+				statusText:  StatusCodeToStatusText[BadRequestStatusCode],
 			},
 			headers: map[string]string{"Accept": "*/*"},
 			body:    nil,
@@ -158,14 +207,16 @@ func (server *HttpServer) parseHTTPRequest(byteMessage []byte) *HttpResponse {
 	startLine := splitMessage[0]
 	err := server.parseRequestLine(startLine)
 	if err != nil {
+		statusCode := err.GetStatusCode()
+		body := err.GetBody()
 		return &HttpResponse{
 			statusLine: StatusLine{
-				httpVersion: "HTTP/1.1",
-				statusCode:  400,
-				statusText:  "Bad Request",
+				httpVersion: SupportedHTTPVersion,
+				statusCode:  &statusCode,
+				statusText:  StatusCodeToStatusText[statusCode],
 			},
 			headers: map[string]string{"Accept": "*/*"},
-			body:    nil,
+			body:    body,
 		}
 	}
 
@@ -191,14 +242,16 @@ func (server *HttpServer) parseHTTPRequest(byteMessage []byte) *HttpResponse {
 	headers := headersAndBody[:*finalHeadersIndex-1]
 	err = server.parseHTTPHeaders(headers)
 	if err != nil {
+		statusCode := err.GetStatusCode()
+		body := err.GetBody()
 		return &HttpResponse{
 			statusLine: StatusLine{
-				httpVersion: "HTTP/1.1",
-				statusCode:  400,
-				statusText:  "Bad Request",
+				httpVersion: SupportedHTTPVersion,
+				statusCode:  &statusCode,
+				statusText:  StatusCodeToStatusText[statusCode],
 			},
 			headers: map[string]string{"Accept": "*/*"},
-			body:    nil,
+			body:    body,
 		}
 	}
 
@@ -209,27 +262,33 @@ func (server *HttpServer) parseHTTPRequest(byteMessage []byte) *HttpResponse {
 	messageBody := headersAndBody[*messageBodyIndex]
 	err = server.parseHTTPMessageBody(messageBody, messageBodyIndex)
 	if err != nil {
+		statusCode := err.GetStatusCode()
+		body := err.GetBody()
 		return &HttpResponse{
 			statusLine: StatusLine{
-				httpVersion: "HTTP/1.1",
-				statusCode:  400,
-				statusText:  "Bad Request",
+				httpVersion: SupportedHTTPVersion,
+				statusCode:  &statusCode,
+				statusText:  StatusCodeToStatusText[statusCode],
 			},
 			headers: map[string]string{"Accept": "*/*"},
-			body:    nil,
+			body:    body,
 		}
 	}
 
 	return nil
 }
 
-func (server *HttpServer) parseHTTPMessageBody(messageBody string, messageBodyStartIndex *int) error {
+func (server *HttpServer) parseHTTPMessageBody(messageBody string, messageBodyStartIndex *int) CustomError {
 	contentLengthHeader := server.req.headers["Content-Length"]
 	// Have the message body but it's missing the content length header
 	// (we are not looking for the transfer encoding atm)
 	// See: https://httpwg.org/specs/rfc9112.html#message.body.length
 	if contentLengthHeader == "" && messageBodyStartIndex != nil {
-		return errors.New("411 Length Required: missing Content-Length header")
+		errMsg := "Missing Content-Length header"
+		return &HTTPError{
+			statusCode: LengthRequiredStatusCode,
+			body:       &errMsg,
+		}
 	}
 
 	server.req.body = &messageBody
@@ -237,7 +296,7 @@ func (server *HttpServer) parseHTTPMessageBody(messageBody string, messageBodySt
 	return nil
 }
 
-func (server *HttpServer) parseHTTPHeaders(array []string) error {
+func (server *HttpServer) parseHTTPHeaders(array []string) CustomError {
 	headers := make(map[string]string)
 	for _, item := range array {
 		if item == "" {
@@ -248,11 +307,14 @@ func (server *HttpServer) parseHTTPHeaders(array []string) error {
 		fieldValue := strings.Join(split[1:], ":")
 
 		if len(strings.Split(fieldName, " ")) > 1 {
-			return errors.New("400 Bad Request: cannot have whitespace between field name and colon")
+			errMsg := "Cannot have whitespace between field name and colon"
+			return &HTTPError{
+				statusCode: BadRequestStatusCode,
+				body:       &errMsg,
+			}
 		}
 
 		headers[fieldName] = strings.Trim(fieldValue, " ")
-
 	}
 
 	server.req.headers = headers
@@ -260,54 +322,62 @@ func (server *HttpServer) parseHTTPHeaders(array []string) error {
 	return nil
 }
 
-func (server *HttpServer) parseHTTPMethod(str string) (Method, error) {
+func (server *HttpServer) parseHTTPMethod(str string) (Method, CustomError) {
 	switch str {
 	case string(get):
 		return get, nil
 	case string(post):
 		return post, nil
 	default:
-		return "", errors.New("501 Not Implemented")
+		return "", &HTTPError{statusCode: NotImplementedStatusCode, body: nil}
 	}
 }
 
 // https://httpwg.org/specs/rfc9112.html#request.target
-func (server *HttpServer) parseRequestTarget(str string) (string, error) {
+func (server *HttpServer) parseRequestTarget(str string) (string, CustomError) {
 	// Check for whitespaces
 	split := strings.Split(str, " ")
 	if len(split) > 1 {
-		return "", errors.New("400 Bad Request: request target should not contain whitespace")
+		errMsg := "Request target should not contain whitespace"
+		return "", &HTTPError{statusCode: BadRequestStatusCode, body: &errMsg}
 	}
 
 	return split[0], nil
 }
 
-func (server *HttpServer) parseHTTPVersion(str string) (string, error) {
+func (server *HttpServer) parseHTTPVersion(str string) (string, CustomError) {
 	split := strings.Split(str, "/")
 	if len(split) != 2 {
-		return "", errors.New("400 Bad Request: wrong HTTP version")
+		errMsg := "Wrong HTTP version"
+		return "", &HTTPError{statusCode: BadRequestStatusCode, body: &errMsg}
 	}
 
 	protocol := split[0]
 	version := split[1]
 
 	if protocol != "HTTP" {
-		return "", errors.New("400 Bad Request: not an HTTP protocol")
+		errMsg := "Not an HTTP protocol"
+		return "", &HTTPError{statusCode: BadRequestStatusCode, body: &errMsg}
 	}
 
 	if version != "1.1" {
-		return "", errors.New("400 Bad Request: HTTP version unsupported")
+		errMsg := "HTTP versin unsupported"
+		return "", &HTTPError{statusCode: BadRequestStatusCode, body: &errMsg}
 	}
 
 	return str, nil
 }
 
 // request-line   = method SP request-target SP HTTP-version
-func (server *HttpServer) parseRequestLine(requestLine string) error {
+func (server *HttpServer) parseRequestLine(requestLine string) CustomError {
 	// split based on whitespace
 	split := strings.Split(requestLine, " ")
 	if len(split) != 3 {
-		return errors.New("Request line not parseable. Expected: method SP request-target SP HTTP-version")
+		errorMsg := "Request line not parseable. Expected: method SP request-target SP HTTP-version"
+		return &HTTPError{
+			statusCode: BadRequestStatusCode,
+			body:       &errorMsg,
+		}
 	}
 
 	method, err := server.parseHTTPMethod(split[0])
@@ -332,16 +402,27 @@ func (server *HttpServer) parseRequestLine(requestLine string) error {
 	return nil
 }
 
-// TODO: handle status code
+func (server *HttpServer) WriteStatusCode(statusCode StatusCode) error {
+	statusText, ok := StatusCodeToStatusText[statusCode]
+	if !ok {
+		return fmt.Errorf("Could not map this code to a valid status text")
+	}
+
+	server.res.statusLine.statusCode = &statusCode
+	server.res.statusLine.statusText = statusText
+
+	return nil
+}
+
 func (server *HttpServer) Write(message []byte) (int, error) {
 	fmt.Printf("Writing message: %s\n", string(message))
 
 	body := string(message)
 	response := HttpResponse{
 		statusLine: StatusLine{
-			httpVersion: "1.1",
-			statusCode:  200,
-			statusText:  "OK",
+			httpVersion: SupportedHTTPVersion,
+			statusCode:  server.res.statusLine.statusCode,
+			statusText:  server.res.statusLine.statusText,
 		},
 		headers: Headers{},
 		body:    &body,
@@ -349,8 +430,18 @@ func (server *HttpServer) Write(message []byte) (int, error) {
 
 	n, err := server.c.Write([]byte(response.toString()))
 	if err != nil {
-		fmt.Printf("Connection write error")
-		fmt.Println(err.Error())
+		body := err.Error()
+		statusCode := InternalServerErrorStatusCode
+		response := HttpResponse{
+			statusLine: StatusLine{
+				httpVersion: SupportedHTTPVersion,
+				statusCode:  &statusCode,
+				statusText:  StatusCodeToStatusText[statusCode],
+			},
+			headers: Headers{},
+			body:    &body,
+		}
+		server.c.Write([]byte(response.toString()))
 		return n, err
 	}
 	return n, nil
@@ -364,24 +455,30 @@ func (server *HttpServer) handleConnection() {
 	defer (func() {
 		err := server.c.Close()
 		if err != nil {
-			fmt.Printf("Connection close error")
+			server.WriteStatusCode(InternalServerErrorStatusCode)
+			server.Write([]byte(err.Error()))
 		}
 	})()
 
 	_, err := server.c.Read(tmp)
 	if err != nil {
 		if err != io.EOF {
-			fmt.Println("Connection read error:", err)
+			server.WriteStatusCode(InternalServerErrorStatusCode)
+			server.Write([]byte(err.Error()))
 		}
 	}
 	packet = append(packet, tmp...)
 
 	error := server.parseHTTPRequest(packet)
 	if error != nil {
+		server.WriteStatusCode(BadRequestStatusCode)
 		server.Write([]byte(error.toString()))
 	}
 	err = server.HandleFunc(server, server.req)
 	if err != nil {
+		if server.res.statusLine.statusCode == nil {
+			server.WriteStatusCode(BadRequestStatusCode)
+		}
 		server.Write([]byte(err.Error()))
 	}
 }
